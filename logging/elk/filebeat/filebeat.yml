@@ -1,0 +1,27 @@
+filebeat.inputs:
+  # ---- container logs (the application writes structured JSON to stdout) ----
+  - type: filestream
+    id: docker-containers
+    paths: [/var/lib/docker/containers/*/*.log]
+    parsers:
+      - container: { stream: all, format: docker }
+
+  # ---- system logs ----
+  - type: filestream
+    id: system-logs
+    paths: [/hostlogs/syslog, /hostlogs/auth.log]
+    fields: { log_source: system }
+    fields_under_root: true
+
+processors:
+  - add_docker_metadata: ~
+  - add_host_metadata: ~
+  # Drop Filebeat's own noise and the ELK stack's logs to avoid feedback loops
+  - drop_event:
+      when:
+        regexp: { container.image.name: "(elastic|logstash|kibana|beats)" }
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: warning

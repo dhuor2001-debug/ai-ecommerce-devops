@@ -1,0 +1,23 @@
+# Build context is the repo root; this keeps images small and secret-free.
+.git
+.github
+**/node_modules
+**/.env
+.env*
+**/*.log
+backups
+logs
+terraform
+ansible
+kubernetes
+helm
+monitoring
+logging
+security
+ai
+docs
+jenkins
+scripts
+**/test
+**/coverage
+*.md

@@ -1,0 +1,37 @@
+---
+- name: Install k3s (traefik disabled - we use ingress-nginx)
+  ansible.builtin.shell: >
+    curl -sfL https://get.k3s.io |
+    INSTALL_K3S_VERSION="{{ k3s_version }}"
+    INSTALL_K3S_EXEC="server --disable traefik --write-kubeconfig-mode 0640 --write-kubeconfig-group {{ app_user }}"
+    sh -
+  args: { creates: /usr/local/bin/k3s }
+
+- name: Wait for the node to be Ready
+  ansible.builtin.command: k3s kubectl wait --for=condition=Ready node --all --timeout=180s
+  changed_when: false
+
+- name: Install Helm
+  ansible.builtin.shell: |
+    curl -fsSL https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz | tar -xz -C /tmp
+    install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+  args: { creates: /usr/local/bin/helm }
+
+- name: Install ingress-nginx
+  ansible.builtin.shell: |
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm repo update
+    helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+      --version {{ ingress_nginx_chart_version }} \
+      --namespace ingress-nginx --create-namespace \
+      --set controller.hostPort.enabled=true --set controller.service.type=ClusterIP \
+      --wait --timeout 5m
+  environment: { KUBECONFIG: /etc/rancher/k3s/k3s.yaml }
+  register: ingress_install
+  changed_when: "'STATUS: deployed' in ingress_install.stdout"
+
+- name: Make kubectl available to the application user
+  ansible.builtin.copy:
+    dest: /etc/profile.d/kubeconfig.sh
+    mode: "0644"
+    content: "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml\n"

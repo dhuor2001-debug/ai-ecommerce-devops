@@ -1,0 +1,147 @@
+// Declarative pipeline - mirrors the target pipeline in the architecture report (section 12).
+// Required Jenkins credentials (Manage Jenkins > Credentials):
+//   registry-creds   Username/password for the container registry
+//   kubeconfig       Secret file with the target cluster kubeconfig
+// Required agent tools: node 22, docker, trivy, gitleaks, helm, kubectl
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 30, unit: 'MINUTES')
+  }
+
+  triggers { githubPush() }   // GitHub webhook -> Jenkins trigger
+
+  parameters {
+    choice(name: 'DEPLOY_ENV', choices: ['dev', 'prod'], description: 'Target environment')
+    booleanParam(name: 'FAIL_ON_VULNS', defaultValue: true, description: 'Fail the build on HIGH/CRITICAL findings')
+  }
+
+  environment {
+    REGISTRY  = 'ghcr.io/your-org'            // CHANGE ME
+    NAMESPACE = 'ecommerce'
+    // IMAGE_TAG / BACKEND_IMG / WEB_IMG are computed in "Checkout Source" (GIT_COMMIT is not known before checkout)
+  }
+
+  stages {
+    stage('Checkout Source') {
+      steps {
+        checkout scm
+        script {
+          def sha = sh(returnStdout: true, script: 'git rev-parse --short=7 HEAD').trim()
+          env.IMAGE_TAG   = "${env.BUILD_NUMBER}-${sha}"
+          env.BACKEND_IMG = "${env.REGISTRY}/ecommerce-backend"
+          env.WEB_IMG     = "${env.REGISTRY}/ecommerce-frontend"
+          echo "Image tag: ${env.IMAGE_TAG}"
+        }
+        sh 'git log -1 --pretty=format:"%h %an %s"'
+      }
+    }
+
+    stage('Install Dependencies') {
+      steps {
+        dir('application/backend') { sh 'npm ci --no-audit --no-fund' }
+      }
+    }
+
+    stage('Build') {
+      steps {
+        sh 'bash -n scripts/*.sh'    // fail fast on shell syntax errors
+        dir('application/backend') { sh 'node --check src/server.js' }
+      }
+    }
+
+    stage('Test') {
+      steps { dir('application/backend') { sh 'npm test' } }
+    }
+
+    stage('Security Checks') {
+      parallel {
+        stage('Secret scan') {
+          steps { sh 'bash security/scan-secrets.sh' }
+        }
+        stage('Dependency scan') {
+          steps { sh 'bash security/scan-dependencies.sh' }
+        }
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        sh '''
+          docker build -f docker/Dockerfile --target backend  --build-arg APP_VERSION=${IMAGE_TAG} -t ${BACKEND_IMG}:${IMAGE_TAG} .
+          docker build -f docker/Dockerfile --target frontend -t ${WEB_IMG}:${IMAGE_TAG} .
+        '''
+      }
+    }
+
+    stage('Image Scan') {
+      steps {
+        sh '''
+          export FAIL_ON_VULNS=${FAIL_ON_VULNS}
+          bash security/scan-image.sh ${BACKEND_IMG}:${IMAGE_TAG}
+          bash security/scan-image.sh ${WEB_IMG}:${IMAGE_TAG}
+        '''
+      }
+    }
+
+    stage('Push Image') {
+      when { anyOf { branch 'main'; branch 'develop' } }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'registry-creds', usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
+          sh '''
+            echo "$REG_PASS" | docker login "${REGISTRY%%/*}" -u "$REG_USER" --password-stdin
+            docker push ${BACKEND_IMG}:${IMAGE_TAG}
+            docker push ${WEB_IMG}:${IMAGE_TAG}
+            docker logout "${REGISTRY%%/*}"
+          '''
+        }
+      }
+    }
+
+    stage('Deploy') {
+      when { anyOf { branch 'main'; branch 'develop' } }
+      steps {
+        // develop -> dev cluster, main -> prod (with manual approval)
+        script {
+          def target = (env.BRANCH_NAME == 'main') ? 'prod' : 'dev'
+          if (target == 'prod') {
+            timeout(time: 15, unit: 'MINUTES') { input message: 'Deploy to PRODUCTION?', ok: 'Deploy' }
+          }
+          env.TARGET_ENV = target
+        }
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          // Rolling update with automatic rollback on failure (helm --atomic)
+          sh 'REGISTRY=${REGISTRY} bash scripts/deploy.sh k8s --env ${TARGET_ENV} --tag ${IMAGE_TAG}'
+        }
+      }
+    }
+
+    stage('Health Check') {
+      when { anyOf { branch 'main'; branch 'develop' } }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh '''
+            kubectl -n ${NAMESPACE} get pods
+            kubectl -n ${NAMESPACE} run smoke-${BUILD_NUMBER} --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
+              -fsS --retry 10 --retry-delay 3 --retry-connrefused http://frontend/health
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    success { echo "Deployment success: ${IMAGE_TAG}" }
+    failure {
+      echo 'Pipeline failed - see console log. helm --atomic has rolled back any failed release.'
+      // Hook for ai/incident-analysis: analyse the failed build log
+      sh 'mkdir -p logs && curl -s "${BUILD_URL}consoleText" > logs/jenkins-build.log || true'
+      sh 'python3 ai/incident-analysis/analyze.py --file logs/jenkins-build.log --offline || true'
+    }
+    always { sh 'docker image prune -f || true' }
+  }
+}

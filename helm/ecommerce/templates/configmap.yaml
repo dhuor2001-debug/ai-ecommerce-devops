@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  labels: {{- include "ecommerce.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.backend.port | quote }}
+  LOG_LEVEL: {{ .Values.backend.logLevel | quote }}
+  APP_VERSION: {{ .Values.image.tag | quote }}
+  POSTGRES_DB: {{ .Values.database.name | quote }}
+  POSTGRES_USER: {{ .Values.database.user | quote }}

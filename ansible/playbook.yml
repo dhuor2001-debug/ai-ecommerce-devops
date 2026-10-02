@@ -1,0 +1,9 @@
+---
+- name: Configure Kubernetes node (Ansible = configuration, Terraform = infrastructure)
+  hosts: k8s_nodes
+  gather_facts: true
+  roles:
+    - common
+    - docker
+    - k3s
+    - app_dirs

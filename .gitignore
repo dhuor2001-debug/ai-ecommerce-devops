@@ -1,0 +1,14 @@
+node_modules/
+.env
+*.log
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+!*.tfvars.example
+backups/
+.DS_Store
+__pycache__/
+*.pem
+*.key
+coverage/

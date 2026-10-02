@@ -1,0 +1,135 @@
+# Kubernetes logging: Filebeat DaemonSet -> Elasticsearch -> Kibana (namespace: logging).
+# DEMO CONFIG: single-node Elasticsearch with security disabled; cluster-internal only (no Ingress).
+apiVersion: v1
+kind: Namespace
+metadata: { name: logging }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: elasticsearch, namespace: logging }
+spec:
+  clusterIP: None
+  selector: { app: elasticsearch }
+  ports: [{ port: 9200 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: elasticsearch, namespace: logging }
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector: { matchLabels: { app: elasticsearch } }
+  template:
+    metadata: { labels: { app: elasticsearch } }
+    spec:
+      initContainers:
+        - name: sysctl
+          image: busybox:1.36
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext: { privileged: true }
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: xpack.security.enabled, value: "false" }
+            - { name: ES_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+          ports: [{ containerPort: 9200 }]
+          readinessProbe: { httpGet: { path: /_cluster/health, port: 9200 }, initialDelaySeconds: 30, periodSeconds: 10 }
+          resources: { requests: { cpu: 250m, memory: 1Gi }, limits: { memory: 1536Mi } }
+          volumeMounts: [{ name: data, mountPath: /usr/share/elasticsearch/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 10Gi } } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: kibana, namespace: logging }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: kibana } }
+  template:
+    metadata: { labels: { app: kibana } }
+    spec:
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:8.15.3
+          env: [{ name: ELASTICSEARCH_HOSTS, value: "http://elasticsearch:9200" }]
+          ports: [{ containerPort: 5601 }]
+          resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { memory: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: kibana, namespace: logging }
+spec:
+  selector: { app: kibana }
+  ports: [{ port: 5601 }]       # access with: kubectl -n logging port-forward svc/kibana 5601:5601
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: filebeat, namespace: logging }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: filebeat }
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces, nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: filebeat }
+subjects: [{ kind: ServiceAccount, name: filebeat, namespace: logging }]
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: filebeat }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: filebeat-config, namespace: logging }
+data:
+  filebeat.yml: |
+    filebeat.autodiscover:
+      providers:
+        - type: kubernetes
+          node: ${NODE_NAME}
+          hints.enabled: true
+          templates:
+            - condition: { equals: { kubernetes.namespace: ecommerce } }
+              config:
+                - type: container
+                  paths: ["/var/log/containers/*${data.kubernetes.container.id}.log"]
+    processors:
+      - add_kubernetes_metadata: ~
+      - decode_json_fields: { fields: ["message"], target: app, overwrite_keys: false, add_error_key: false }
+    output.elasticsearch:
+      hosts: ["http://elasticsearch.logging:9200"]
+      index: "ecommerce-logs-%{+yyyy.MM.dd}"
+    setup.template.name: ecommerce-logs
+    setup.template.pattern: "ecommerce-logs-*"
+    setup.ilm.enabled: false
+    logging.level: warning
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: { name: filebeat, namespace: logging }
+spec:
+  selector: { matchLabels: { app: filebeat } }
+  template:
+    metadata: { labels: { app: filebeat } }
+    spec:
+      serviceAccountName: filebeat
+      containers:
+        - name: filebeat
+          image: docker.elastic.co/beats/filebeat:8.15.3
+          args: ["-c", "/etc/filebeat.yml", "-e"]
+          env: [{ name: NODE_NAME, valueFrom: { fieldRef: { fieldPath: spec.nodeName } } }]
+          securityContext: { runAsUser: 0 }       # needed to read node log files
+          resources: { requests: { cpu: 50m, memory: 100Mi }, limits: { memory: 200Mi } }
+          volumeMounts:
+            - { name: config, mountPath: /etc/filebeat.yml, subPath: filebeat.yml, readOnly: true }
+            - { name: varlog, mountPath: /var/log, readOnly: true }
+            - { name: containers, mountPath: /var/lib/docker/containers, readOnly: true }
+      volumes:
+        - { name: config, configMap: { name: filebeat-config } }
+        - { name: varlog, hostPath: { path: /var/log } }
+        - { name: containers, hostPath: { path: /var/lib/docker/containers } }

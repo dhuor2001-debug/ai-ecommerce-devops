@@ -1,0 +1,14 @@
+---
+app_user: deploy
+app_dir: /opt/ecommerce
+timezone: UTC
+
+base_packages: [curl, git, jq, unzip, htop, ca-certificates, gnupg, ufw, fail2ban, unattended-upgrades, chrony]
+
+# Pinned for repeatable builds - bump deliberately.
+k3s_version: "v1.30.5+k3s1"
+helm_version: "v3.16.2"
+ingress_nginx_chart_version: "4.11.3"
+
+# Firewall (also enforced by the AWS security group)
+ufw_allowed_ports: [22, 80, 443, 6443]

@@ -1,0 +1,85 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt: { update_cache: true, cache_valid_time: 3600 }
+
+- name: Install base packages
+  ansible.builtin.apt: { name: "{{ base_packages }}", state: present }
+
+- name: Set timezone
+  ansible.builtin.command: timedatectl set-timezone {{ timezone }}
+  when: ansible_date_time.tz != timezone
+  changed_when: true
+
+- name: Create application user (no password, sudo not granted)
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    shell: /bin/bash
+    create_home: true
+    password_lock: true
+
+- name: Copy admin SSH keys to the application user
+  ansible.builtin.shell: |
+    install -d -m 700 -o {{ app_user }} -g {{ app_user }} /home/{{ app_user }}/.ssh
+    install -m 600 -o {{ app_user }} -g {{ app_user }} /home/{{ ansible_user }}/.ssh/authorized_keys /home/{{ app_user }}/.ssh/authorized_keys
+  args: { creates: "/home/{{ app_user }}/.ssh/authorized_keys" }
+
+# ---- SSH hardening ----
+- name: Harden sshd
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/99-hardening.conf
+    mode: "0644"
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      X11Forwarding no
+      MaxAuthTries 3
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+  notify: Restart sshd
+
+- name: Validate sshd configuration
+  ansible.builtin.command: sshd -t
+  changed_when: false
+
+# ---- kernel hardening ----
+- name: Apply sysctl hardening
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-hardening.conf
+    mode: "0644"
+    content: |
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.icmp_echo_ignore_broadcasts = 1
+      net.ipv4.tcp_syncookies = 1
+      kernel.kptr_restrict = 2
+      kernel.dmesg_restrict = 1
+  notify: Reload sysctl
+
+# ---- firewall ----
+- name: Set UFW defaults
+  ansible.builtin.command: "{{ item }}"
+  loop: [ufw default deny incoming, ufw default allow outgoing]
+  changed_when: false
+
+- name: Allow required ports
+  ansible.builtin.command: ufw allow {{ item }}/tcp
+  loop: "{{ ufw_allowed_ports }}"
+  register: ufw_rule
+  changed_when: "'Skipping' not in ufw_rule.stdout and 'existing' not in ufw_rule.stdout"
+
+- name: Allow pod/service networks (needed for Kubernetes traffic)
+  ansible.builtin.command: ufw allow from {{ item }}
+  loop: ["10.42.0.0/16", "10.43.0.0/16"]
+  register: ufw_k8s
+  changed_when: "'Skipping' not in ufw_k8s.stdout and 'existing' not in ufw_k8s.stdout"
+
+- name: Enable UFW
+  ansible.builtin.command: ufw --force enable
+  register: ufw_enable
+  changed_when: "'already' not in ufw_enable.stdout"
+
+- name: Enable services (fail2ban, unattended upgrades, time sync)
+  ansible.builtin.systemd: { name: "{{ item }}", enabled: true, state: started }
+  loop: [fail2ban, unattended-upgrades, chrony]

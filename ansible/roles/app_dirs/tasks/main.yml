@@ -1,0 +1,29 @@
+---
+- name: Create application directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ app_dir }}", mode: "0750" }
+    - { path: "{{ app_dir }}/backups", mode: "0700" }
+    - { path: "{{ app_dir }}/logs", mode: "0750" }
+
+- name: Schedule nightly database backup
+  ansible.builtin.cron:
+    name: ecommerce-db-backup
+    minute: "30"
+    hour: "2"
+    user: "{{ app_user }}"
+    job: "cd {{ app_dir }} && NAMESPACE=ecommerce KUBECONFIG=/etc/rancher/k3s/k3s.yaml ./scripts/backup.sh --k8s >> logs/backup.log 2>&1"
+
+- name: Schedule weekly cleanup
+  ansible.builtin.cron:
+    name: ecommerce-cleanup
+    minute: "0"
+    hour: "3"
+    weekday: "0"
+    user: "{{ app_user }}"
+    job: "cd {{ app_dir }} && ./scripts/cleanup.sh >> logs/cleanup.log 2>&1"

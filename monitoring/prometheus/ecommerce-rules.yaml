@@ -1,0 +1,25 @@
+# Kubernetes alert rules (apply after kube-prometheus-stack is installed).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ecommerce-rules
+  namespace: monitoring
+  labels: { release: monitoring }
+spec:
+  groups:
+    - name: ecommerce-k8s
+      rules:
+        - alert: PodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="ecommerce"}[15m]) > 3
+          labels: { severity: critical }
+          annotations: { summary: "Pod {{ $labels.pod }} is restarting repeatedly" }
+        - alert: DeploymentUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="ecommerce"} < kube_deployment_spec_replicas{namespace="ecommerce"}
+          for: 5m
+          labels: { severity: warning }
+          annotations: { summary: "Deployment {{ $labels.deployment }} has unavailable replicas" }
+        - alert: BackendDown
+          expr: up{job="ecommerce-pods", app="backend"} == 0
+          for: 1m
+          labels: { severity: critical }
+          annotations: { summary: "Backend pod {{ $labels.pod }} is down" }

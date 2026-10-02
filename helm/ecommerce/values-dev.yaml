@@ -1,0 +1,8 @@
+backend:
+  replicas: 1
+  logLevel: debug
+  autoscaling: { enabled: false }
+frontend:
+  replicas: 1
+ingress:
+  host: shop.dev.example.com

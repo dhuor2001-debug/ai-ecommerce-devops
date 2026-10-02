@@ -1,0 +1,8 @@
+backend:
+  replicas: 3
+  logLevel: info
+ingress:
+  host: shop.example.com
+  tls: { enabled: true, secretName: ecommerce-tls }
+database:
+  storage: 20Gi

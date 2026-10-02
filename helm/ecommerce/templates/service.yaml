@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels: {{- include "ecommerce.labels" . | nindent 4 }}
+spec:
+  selector: { app: backend }
+  ports: [{ name: http, port: {{ .Values.backend.port }}, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels: {{- include "ecommerce.labels" . | nindent 4 }}
+spec:
+  selector: { app: frontend }
+  ports: [{ name: http, port: 80, targetPort: http }]

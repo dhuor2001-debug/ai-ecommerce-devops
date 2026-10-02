@@ -1,0 +1,12 @@
+title = "ecommerce gitleaks config"
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Template files and docs contain placeholders, not real secrets"
+paths = [
+  '''\.env\.example$''',
+  '''kubernetes/secret\.yaml$''',
+  '''docs/.*''',
+  '''package-lock\.json$''',
+]
