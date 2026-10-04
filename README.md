@@ -75,6 +75,10 @@ ai/            incident-analysis (offline rules + Claude)             docs/     
 
 
 
-##Actions 
+## Actions 
 
 <img width="1919" height="907" alt="image" src="https://github.com/user-attachments/assets/0544a89e-dacf-485a-8378-d35c7e9ac725" />
+
+
+## Server 
+<img width="1912" height="913" alt="image" src="https://github.com/user-attachments/assets/8703b896-6054-42fa-8976-300837a828a4" />
