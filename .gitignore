@@ -12,3 +12,6 @@ __pycache__/
 *.pem
 *.key
 coverage/
+!terraform/environments/*/*.tfvars
+ansible/inventory/dev.ini
+ansible/inventory/prod.ini

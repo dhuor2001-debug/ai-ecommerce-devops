@@ -36,6 +36,6 @@ resource "local_file" "ansible_inventory" {
   file_permission = "0644"
   content         = <<-EOT
     [k8s_nodes]
-    ${module.compute.public_ip} ansible_user=ubuntu ansible_ssh_private_key_file=${path.root}/${module.compute.private_key_file}
+    ${module.compute.public_ip} ansible_user=ubuntu ansible_ssh_private_key_file=${abspath(path.root)}/${module.compute.private_key_file}
   EOT
 }
