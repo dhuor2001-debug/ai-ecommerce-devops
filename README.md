@@ -72,3 +72,9 @@ ai/            incident-analysis (offline rules + Claude)             docs/     
 * Containers run non-root, read-only FS where possible, all capabilities dropped; NetworkPolicies default-deny.
 * The ELK and Prometheus/Grafana configs here are **demo-grade** (ES security off, localhost-bound). Enable auth/TLS before exposing them.
 * The AI analyzer redacts secrets before sending logs anywhere and only suggests actions; it never executes them.
+
+
+
+##Actions 
+
+<img width="1919" height="907" alt="image" src="https://github.com/user-attachments/assets/0544a89e-dacf-485a-8378-d35c7e9ac725" />
