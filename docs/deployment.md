@@ -21,12 +21,14 @@ Create the Kibana data view `ecommerce-logs-*` and search e.g. `log_level : "err
 
 ## 2. Cloud (Terraform -> Ansible -> Kubernetes)
 
+Terraform's AWS provider needs AWS credentials from environment variables, the shared AWS config, or an attached role. The AWS CLI is optional; it is only needed for commands such as `aws sts get-caller-identity`.
+
 ```bash
 # Infrastructure
 cd terraform
-cp terraform.tfvars.example terraform.tfvars        # set admin_cidrs to YOUR ip/32
-terraform init && terraform plan  -var-file=environments/dev/dev.tfvars
-terraform apply -var-file=environments/dev/dev.tfvars
+# Set admin_cidrs in terraform.tfvars to the IP/CIDR you'll connect from.
+terraform init && terraform plan
+terraform apply
 # writes ../ansible/inventory/dev.ini automatically
 
 # Server configuration
